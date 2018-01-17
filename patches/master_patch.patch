@@ -159,6 +159,195 @@ index 751043efd8038573b2870dc60e5d7ad737887d5f..321971b975659028005aabd8a9163ac8
            "safe_browsing::mojom::SafeBrowsing",
            "spellcheck::mojom::SpellCheckHost",
            "spellcheck::mojom::SpellCheckPanelHost",
+diff --git a/chrome/browser/download/download_target_determiner.cc b/chrome/browser/download/download_target_determiner.cc
+index 4f4dadd98fd997e9659d10e6989916dbb0bb899e..2d8bba337daf67637d7b95e63a3b3185f9076906 100644
+--- a/chrome/browser/download/download_target_determiner.cc
++++ b/chrome/browser/download/download_target_determiner.cc
+@@ -16,7 +16,6 @@
+ #include "base/threading/thread_task_runner_handle.h"
+ #include "base/time/time.h"
+ #include "chrome/browser/download/chrome_download_manager_delegate.h"
+-#include "chrome/browser/download/download_crx_util.h"
+ #include "chrome/browser/download/download_prefs.h"
+ #include "chrome/browser/download/download_stats.h"
+ #include "chrome/browser/history/history_service_factory.h"
+@@ -92,7 +91,7 @@ DownloadTargetDeterminer::DownloadTargetDeterminer(
+     DownloadPrefs* download_prefs,
+     DownloadTargetDeterminerDelegate* delegate,
+     const CompletionCallback& callback)
+-    : next_state_(STATE_GENERATE_TARGET_PATH),
++    : next_state_(STATE_CHECK_DOWNLOAD_URL),
+       confirmation_reason_(DownloadConfirmationReason::NONE),
+       should_notify_extensions_(false),
+       create_target_directory_(false),
+@@ -219,43 +218,6 @@ DownloadTargetDeterminer::Result
+     conflict_action_ = DownloadPathReservationTracker::OVERWRITE;
+     RecordDownloadPathGeneration(
+         DownloadPathGenerationEvent::USE_EXISTING_VIRTUAL_PATH, false);
+-  } else if (!is_forced_path) {
+-    // If we don't have a forced path, we should construct a path for the
+-    // download. Forced paths are only specified for programmatic downloads
+-    // (WebStore, Drag&Drop). Treat the path as a virtual path. We will
+-    // eventually determine whether this is a local path and if not, figure out
+-    // a local path.
+-    std::string suggested_filename = download_->GetSuggestedFilename();
+-    if (suggested_filename.empty() &&
+-        download_->GetMimeType() == "application/x-x509-user-cert") {
+-      suggested_filename = "user.crt";
+-    }
+-
+-    std::string default_filename(
+-        l10n_util::GetStringUTF8(IDS_DEFAULT_DOWNLOAD_FILENAME));
+-    base::FilePath generated_filename = net::GenerateFileName(
+-        download_->GetURL(),
+-        download_->GetContentDisposition(),
+-        GetProfile()->GetPrefs()->GetString(prefs::kDefaultCharset),
+-        suggested_filename,
+-        download_->GetMimeType(),
+-        default_filename);
+-    confirmation_reason_ = NeedsConfirmation(generated_filename);
+-    base::FilePath target_directory;
+-    if (confirmation_reason_ != DownloadConfirmationReason::NONE) {
+-      DCHECK(!download_prefs_->IsDownloadPathManaged());
+-      // If the user is going to be prompted and the user has been prompted
+-      // before, then always prefer the last directory that the user selected.
+-      target_directory = download_prefs_->SaveFilePath();
+-      RecordDownloadPathGeneration(
+-          DownloadPathGenerationEvent::USE_LAST_PROMPT_DIRECTORY, false);
+-    } else {
+-      target_directory = download_prefs_->DownloadPath();
+-      RecordDownloadPathGeneration(
+-          DownloadPathGenerationEvent::USE_DEFAULTL_DOWNLOAD_DIRECTORY, false);
+-    }
+-    virtual_path_ = target_directory.Append(generated_filename);
+-    should_notify_extensions_ = true;
+   } else {
+     conflict_action_ = DownloadPathReservationTracker::OVERWRITE;
+     virtual_path_ = download_->GetForcedFilePath();
+@@ -278,15 +240,7 @@ DownloadTargetDeterminer::Result
+   DCHECK(!virtual_path_.empty());
+ 
+   next_state_ = STATE_RESERVE_VIRTUAL_PATH;
+-
+-  if (!should_notify_extensions_ ||
+-      download_->GetState() != DownloadItem::IN_PROGRESS)
+-    return CONTINUE;
+-
+-  delegate_->NotifyExtensions(download_, virtual_path_,
+-      base::Bind(&DownloadTargetDeterminer::NotifyExtensionsDone,
+-                 weak_ptr_factory_.GetWeakPtr()));
+-  return QUIT_DOLOOP;
++  return CONTINUE;
+ }
+ 
+ void DownloadTargetDeterminer::NotifyExtensionsDone(
+@@ -306,8 +260,7 @@ void DownloadTargetDeterminer::NotifyExtensionsDone(
+     // last_download_path/music/foo.mp3, then last_download_path will accumulate
+     // the subdirectory /music/ so that the next download may end up in
+     // Downloads/music/music/music/bar.mp3.
+-    base::FilePath new_path(download_prefs_->DownloadPath().Append(
+-        suggested_path).NormalizePathSeparators());
++    base::FilePath new_path(suggested_path.NormalizePathSeparators());
+     // Do not pass a mime type to GenerateSafeFileName so that it does not force
+     // the filename to have an extension if the (Chrome) extension does not
+     // suggest it.
+@@ -327,7 +280,7 @@ DownloadTargetDeterminer::Result
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   DCHECK(!virtual_path_.empty());
+ 
+-  next_state_ = STATE_PROMPT_USER_FOR_DOWNLOAD_PATH;
++  next_state_ = STATE_NONE;
+   if (download_->GetState() != DownloadItem::IN_PROGRESS)
+     return CONTINUE;
+ 
+@@ -392,7 +345,7 @@ void DownloadTargetDeterminer::ReserveVirtualPathDone(
+         NOTREACHED();
+     }
+   }
+-
++  result = COMPLETE;
+   DoLoop();
+ }
+ 
+@@ -439,7 +392,6 @@ void DownloadTargetDeterminer::RequestConfirmationDone(
+     confirmation_reason_ = DownloadConfirmationReason::NONE;
+ 
+   virtual_path_ = virtual_path;
+-  download_prefs_->SetSaveFilePath(virtual_path_.DirName());
+   DoLoop();
+ }
+ 
+@@ -650,7 +602,7 @@ DownloadTargetDeterminer::Result
+     DownloadTargetDeterminer::DoCheckDownloadUrl() {
+   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+   DCHECK(!virtual_path_.empty());
+-  next_state_ = STATE_CHECK_VISITED_REFERRER_BEFORE;
++  next_state_ = STATE_RESERVE_VIRTUAL_PATH;
+ 
+   // If user has validated a dangerous download, don't check.
+   if (danger_type_ == content::DOWNLOAD_DANGER_TYPE_USER_VALIDATED)
+@@ -888,35 +840,12 @@ DownloadConfirmationReason DownloadTargetDeterminer::NeedsConfirmation(
+     return DownloadConfirmationReason::NONE;
+   }
+ 
+-  // Don't ask where to save if the download path is managed. Even if the user
+-  // wanted to be prompted for "all" downloads, or if this was a 'Save As'
+-  // download.
+-  if (download_prefs_->IsDownloadPathManaged())
+-    return DownloadConfirmationReason::NONE;
+-
+   // Prompt if this is a 'Save As' download.
+   if (download_->GetTargetDisposition() ==
+       DownloadItem::TARGET_DISPOSITION_PROMPT)
+     return DownloadConfirmationReason::SAVE_AS;
+ 
+-#if BUILDFLAG(ENABLE_EXTENSIONS)
+-  // Don't prompt for extension downloads.
+-  if (download_crx_util::IsExtensionDownload(*download_) ||
+-      filename.MatchesExtension(extensions::kExtensionFileExtension))
+-    return DownloadConfirmationReason::NONE;
+-#endif
+-
+-  // Don't prompt for file types that are marked for opening automatically.
+-  if (download_prefs_->IsAutoOpenEnabledBasedOnExtension(filename))
+-    return DownloadConfirmationReason::NONE;
+-
+-  // For everything else, prompting is controlled by the PromptForDownload pref.
+-  // The user may still be prompted even if this pref is disabled due to, for
+-  // example, there being an unresolvable filename conflict or the target path
+-  // is not writeable.
+-  return download_prefs_->PromptForDownload()
+-             ? DownloadConfirmationReason::PREFERENCE
+-             : DownloadConfirmationReason::NONE;
++  return DownloadConfirmationReason::NONE;
+ }
+ 
+ bool DownloadTargetDeterminer::HasPromptedForPath() const {
+@@ -936,23 +865,12 @@ DownloadFileType::DangerLevel DownloadTargetDeterminer::GetDangerLevel(
+       !download_->GetForcedFilePath().empty())
+     return DownloadFileType::NOT_DANGEROUS;
+ 
+-  const bool is_extension_download =
+-      download_crx_util::IsExtensionDownload(*download_);
+-
+   // User-initiated extension downloads from pref-whitelisted sources are not
+   // considered dangerous.
+-  if (download_->HasUserGesture() &&
+-      is_extension_download &&
+-      download_crx_util::OffStoreInstallAllowedByPrefs(
+-          GetProfile(), *download_)) {
++  if (download_->HasUserGesture()) {
+     return DownloadFileType::NOT_DANGEROUS;
+   }
+ 
+-  // Anything the user has marked auto-open is OK if it's user-initiated.
+-  if (download_prefs_->IsAutoOpenEnabledBasedOnExtension(virtual_path_) &&
+-      download_->HasUserGesture())
+-    return DownloadFileType::NOT_DANGEROUS;
+-
+   DownloadFileType::DangerLevel danger_level =
+       safe_browsing::FileTypePolicies::GetInstance()->GetFileDangerLevel(
+           virtual_path_.BaseName());
 diff --git a/chrome/browser/importer/external_process_importer_client.h b/chrome/browser/importer/external_process_importer_client.h
 index 864a6951115dda5ed74963f18b35692960397d50..3e1a2b719521ac2c60bae05f94e409bc4c7da022 100644
 --- a/chrome/browser/importer/external_process_importer_client.h
@@ -608,6 +797,19 @@ index 7ee1ec91e6ecb8cd9e237f0e67063ed704566ea6..9198607c50f23d7757016dcfb7526993
    // Finds TabStripModel which has a WebContents whose id is the given
    // web_contents_id, and returns the WebContents index and the TabStripModel.
    int FindTabStripModelById(int64_t target_web_contents_id,
+diff --git a/chrome/browser/safe_browsing/download_protection/download_url_sb_client.cc b/chrome/browser/safe_browsing/download_protection/download_url_sb_client.cc
+index 9763c38c680c69044ed89c89ea09e10255439fcb..3d6b7015996c864f86209650db00c65bcad942cd 100644
+--- a/chrome/browser/safe_browsing/download_protection/download_url_sb_client.cc
++++ b/chrome/browser/safe_browsing/download_protection/download_url_sb_client.cc
+@@ -120,8 +120,6 @@ void DownloadUrlSBClient::ReportMalware(SBThreatType threat_type) {
+   hit_report.extended_reporting_level = extended_reporting_level_;
+   hit_report.is_metrics_reporting_active =
+       ChromeMetricsServiceAccessor::IsMetricsAndCrashReportingEnabled();
+-
+-  ui_manager_->MaybeReportSafeBrowsingHit(hit_report, item_->GetWebContents());
+ }
+ 
+ void DownloadUrlSBClient::IdentifyReferrerChain() {
 diff --git a/chrome/browser/safe_browsing/safe_browsing_blocking_page.cc b/chrome/browser/safe_browsing/safe_browsing_blocking_page.cc
 index 5b50863736f2306202e8345d83be2f399ed2c371..655cb90ef69156802b1f227f7f31210c6d83beae 100644
 --- a/chrome/browser/safe_browsing/safe_browsing_blocking_page.cc
