@@ -42,7 +42,8 @@ using safe_browsing::DownloadProtectionService;
 #if defined(FULL_SAFE_BROWSING)
 
 const base::string16 safeBrowsingError = base::ASCIIToUTF16("Malware Download");
-const base::string16 safeBrowsingContent = base::ASCIIToUTF16("Downloading Malicious Content");
+const base::string16 safeBrowsingContent
+                        = base::ASCIIToUTF16("Downloading Malicious Content");
 
 // String pointer used for identifying safebrowing data associated with
 // a download item.
@@ -358,7 +359,8 @@ void AtomDownloadManagerDelegate::MaybeSendDangerousDownloadOpenedReport(
 #endif
 }
 
-AtomDownloadManagerDelegate::AtomDownloadManagerDelegate(content::DownloadManager* manager)
+AtomDownloadManagerDelegate::AtomDownloadManagerDelegate(
+    content::DownloadManager* manager)
     : download_manager_(manager),
       weak_ptr_factory_(this) {}
 
@@ -386,8 +388,6 @@ void AtomDownloadManagerDelegate::OnDownloadTargetDetermined(
     int32_t download_id,
     const content::DownloadTargetCallback& callback,
     std::unique_ptr<DownloadTargetInfo> target_info) {
-    //PathValidationResult result,
-    //const base::FilePath& target_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   auto item = download_manager_->GetDownload(download_id);
   if (!item)
@@ -415,11 +415,6 @@ void AtomDownloadManagerDelegate::OnDownloadTargetDetermined(
     download_item = atom::api::DownloadItem::Create(isolate, item).get();
 
   base::FilePath path = target_info->target_path;
-
-  /*if (result == PathValidationResult::SUCCESS &&
-      !download_item->ShouldPrompt()) {
-    path = target_path;
-  }*/
 
   NativeWindow* window = nullptr;
   content::WebContents* web_contents = item->GetWebContents();
@@ -451,7 +446,8 @@ void AtomDownloadManagerDelegate::OnDownloadTargetDetermined(
 
   auto interrupt_reason = ShouldBlockFile(target_info->danger_type)
                           ? content::DOWNLOAD_INTERRUPT_REASON_FILE_BLOCKED
-                          : path.empty() ? content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
+                          : path.empty()
+                          ? content::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
                           : content::DOWNLOAD_INTERRUPT_REASON_NONE;
 
   callback.Run(path,
@@ -520,7 +516,8 @@ void AtomDownloadManagerDelegate::ReserveVirtualPath(
     const ReservedPathCallback& callback) {
       Profile* browser_context = static_cast<Profile*>(
           download_manager_->GetBrowserContext());
-      base::FilePath default_download_path(browser_context->GetPrefs()->GetFilePath(
+      base::FilePath default_download_path(
+        browser_context->GetPrefs()->GetFilePath(
           prefs::kDownloadDefaultDirectory));
 
       DownloadPathReservationTracker::GetReservedPath(

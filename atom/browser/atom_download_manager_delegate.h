@@ -5,6 +5,7 @@
 #ifndef ATOM_BROWSER_ATOM_DOWNLOAD_MANAGER_DELEGATE_H_
 #define ATOM_BROWSER_ATOM_DOWNLOAD_MANAGER_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
 #include "base/memory/weak_ptr.h"
@@ -43,8 +44,6 @@ class AtomDownloadManagerDelegate : public content::DownloadManagerDelegate,
     int32_t download_id,
     const content::DownloadTargetCallback& callback,
     std::unique_ptr<DownloadTargetInfo> target_info);
-    //PathValidationResult result,
-    //const base::FilePath& target_path);
 
   // content::DownloadManagerDelegate:
   void Shutdown() override;
@@ -84,15 +83,14 @@ class AtomDownloadManagerDelegate : public content::DownloadManagerDelegate,
                        const GetFileMimeTypeCallback& callback) override {}
 
  private:
-   // Internal gateways for ShouldCompleteDownload().
-   bool IsDownloadReadyForCompletion(
-       content::DownloadItem* item,
-       const base::Closure& internal_complete_callback);
+    // Internal gateways for ShouldCompleteDownload().
+    bool IsDownloadReadyForCompletion(
+        content::DownloadItem* item,
+        const base::Closure& internal_complete_callback);
 
-   // Returns true if |path| should open in the browser.
-   bool IsOpenInBrowserPreferreredForFile(const base::FilePath& path);
-
-   void MaybeSendDangerousDownloadOpenedReport(content::DownloadItem* download,
+    // Returns true if |path| should open in the browser.
+    bool IsOpenInBrowserPreferreredForFile(const base::FilePath& path);
+    void MaybeSendDangerousDownloadOpenedReport(content::DownloadItem* download,
                                                bool show_download_in_folder);
 
   // Get the save path set on the associated api::DownloadItem object
